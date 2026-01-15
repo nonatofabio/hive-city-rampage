@@ -762,8 +762,8 @@ def main():
 
         # ---------------- UPDATE ----------------
         if player.hp > 0:
-            ax = (keys[pg.K_RIGHT]-keys[pg.K_LEFT])
-            ay = (keys[pg.K_DOWN]-keys[pg.K_UP])
+            ax = (keys[pg.K_d]-keys[pg.K_a])
+            ay = (keys[pg.K_s]-keys[pg.K_w])
 
             if ax or ay:
                 sx = 1 if ax>0 else -1 if ax<0 else 0
@@ -800,30 +800,22 @@ def main():
             else:
                 player.step_t = 0
 
-            # aim
-            if player.aim_hold > 0:
-                player.aim_hold -= 1
-            tgt = player.aim_tgt if (player.aim_tgt in enemies and player.aim_hold>0) else None
-            if tgt is None:
-                tgt = pick_aim_target(player, enemies)
-                player.aim_tgt = tgt
-                player.aim_hold = AIM_HOLD_FR if tgt else 0
-
-            if tgt:
-                ux, uy, _ = norm(tgt.x-player.x, tgt.y-player.y)
-            else:
-                ux, uy = player.face
-
-            ax_s = AIM_SMOOTH
-            player.aim = (player.aim[0] + (ux-player.aim[0])*ax_s,
-                          player.aim[1] + (uy-player.aim[1])*ax_s)
-            ux, uy, _ = norm(player.aim[0], player.aim[1])
+            # aim with mouse
+            mx, my = pg.mouse.get_pos()
+            # Convert screen position to world position
+            world_mx = mx + camera.x - camera.frame_shake_x
+            world_my = my + camera.y - camera.frame_shake_y
+            # Direction from player to mouse
+            ux, uy, _ = norm(world_mx - player.x, world_my - player.y)
             player.aim = (ux, uy)
+            # Update face direction to match aim
+            player.face = (1 if ux > 0 else -1, 0)
 
-            # shooting (Z)
+            # shooting (left mouse button)
+            mouse_buttons = pg.mouse.get_pressed()
             player.is_shooting = False
             if player.cd > 0: player.cd -= 1
-            if keys[pg.K_z] and player.cd <= 0:
+            if mouse_buttons[0] and player.cd <= 0:
                 player.cd = SHOT_COOLDOWN_FR
                 player.shoot_flash = 0.10
                 player.is_shooting = True
