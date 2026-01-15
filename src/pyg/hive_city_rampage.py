@@ -35,6 +35,28 @@ ENEMY_BULLET_SPEED = 250.0
 ENEMY_BULLET_LIFE = 1.2
 ENEMY_SHOOT_RANGE = 9 * TILE
 
+# shield regen
+SHIELD_REGEN_DELAY = 0.4  # seconds after shooting before regen starts
+SHIELD_REGEN_RATE = 5.0   # shield points per second
+
+# pickups
+PICKUP_RADIUS = 24
+PICKUP_SPAWN_CHANCE = 0.15  # chance per enemy kill
+HEALTH_PICKUP_AMOUNT = 3
+SHIELD_PICKUP_AMOUNT = 5
+
+# points
+POINTS_GRUNT = 10
+POINTS_RUNNER = 15
+POINTS_SHOOTER = 25
+POINTS_BRUTE = 50
+COMBO_WINDOW = 1.5  # seconds to chain kills
+COMBO_MULTIPLIER = 0.5  # bonus per combo level (1.0, 1.5, 2.0, ...)
+WAVE_BONUS_BASE = 100  # base points per wave completed
+
+# stim packs
+MAX_STIMS = 3
+
 # -------------------- HELPERS --------------------
 def clamp(v, a, b): return a if v < a else b if v > b else v
 def dist2(ax, ay, bx, by):
@@ -462,6 +484,12 @@ class Player(Entity):
         self.max_shield = 15
         self.shield_regen_timer = 0.0
         self.is_shooting = False  # track if player shot this frame
+        # Points and combo system
+        self.points = 0
+        self.combo = 0
+        self.combo_timer = 0.0
+        # Stim packs (auto-revive)
+        self.stims_used = 0
 
 class Enemy(Entity):
     def __init__(self, x, y, kind="grunt", wave=1):
@@ -492,6 +520,13 @@ class Bullet:
         self.vx=vx; self.vy=vy
         self.life=life
         self.owner=owner
+
+class Pickup:
+    def __init__(self, x, y, kind="health"):
+        self.x = x
+        self.y = y
+        self.kind = kind  # "health" or "shield"
+        self.life = 15.0  # despawn after 15 seconds
 
 # -------------------- DIRECTOR --------------------
 class Director:
@@ -712,6 +747,7 @@ def main():
     director = Director()
     enemies=[]
     bullets=[]
+    pickups=[]
 
     # Create AnimatedTile instances for the arena
     animated_tile_instances = {}
@@ -747,7 +783,7 @@ def main():
             if ev.type == pg.KEYDOWN and ev.key == pg.K_x:
                 arena = Arena()
                 player = Player(arena.w*TILE/2, arena.h*TILE/2)
-                enemies.clear(); bullets.clear()
+                enemies.clear(); bullets.clear(); pickups.clear()
                 director = Director()
                 camera.shake_t = 0; camera.shake_pow = 0; camera.shake_seed = 0
 
@@ -825,19 +861,24 @@ def main():
                 bullets.append(Bullet(player.x, player.y, bvx, bvy, life=0.75, owner="player"))
                 camera.add_shake(1.1, 8)  # halved for better feel
 
-            # Shield regeneration (1 per second when not shooting)
+            # Shield regeneration (continuous after delay when not shooting)
             if not player.is_shooting and player.shield < player.max_shield:
                 player.shield_regen_timer += dt
-                if player.shield_regen_timer >= 1.0:
-                    player.shield_regen_timer = 0.0
-                    player.shield = min(player.max_shield, player.shield + 1)
+                if player.shield_regen_timer >= SHIELD_REGEN_DELAY:
+                    player.shield = min(player.max_shield, player.shield + SHIELD_REGEN_RATE * dt)
 
             if player.ifr > 0: player.ifr -= 1
             if player.dmg_cd > 0: player.dmg_cd -= 1
             if player.shoot_flash > 0: player.shoot_flash -= dt
 
         # director
+        prev_wave = director.wave
         director.tick(dt, arena, player, enemies, camera)
+
+        # Wave completion bonus
+        if director.wave > prev_wave and player.hp > 0:
+            wave_bonus = WAVE_BONUS_BASE * prev_wave
+            player.points += wave_bonus
 
         # bullets update
         for b in bullets[:]:
@@ -884,17 +925,42 @@ def main():
 
             e.try_move(arena, vx*dt, vy*dt)
 
-            # separation - strong enough to prevent overlap (radius 48, sprites never overlap)
+            # separation from other enemies (stronger for non-runners)
             pushx = pushy = 0.0
+
+            # Different separation rules based on enemy type
+            if e.kind == "runner":
+                sep_radius = 32  # Runners can get closer
+                sep_force = 2.0   # Weaker separation force
+            else:
+                sep_radius = 56  # Other enemies need more space
+                sep_force = 4.5   # Strong separation force
+
             for o in enemies:
                 if o is e: continue
                 ddx, ddy = e.x - o.x, e.y - o.y
                 d2 = ddx*ddx + ddy*ddy
-                if 1 < d2 < (48**2):  # larger radius
+
+                # Use appropriate radius based on both enemy types
+                check_radius = sep_radius if o.kind != "runner" or e.kind != "runner" else 32
+
+                if 1 < d2 < (check_radius**2):
                     ux2, uy2, dd = norm(ddx, ddy)
-                    f = (48 - dd) * 2.5  # stronger force
+                    f = (check_radius - dd) * sep_force
                     pushx += ux2 * f
                     pushy += uy2 * f
+
+            # Separation from player (no visual overlap)
+            if player.hp > 0:
+                pdx, pdy = e.x - player.x, e.y - player.y
+                pd2 = pdx*pdx + pdy*pdy
+                player_sep_radius = 48  # Keep enemies visually separated from player
+                if 1 < pd2 < (player_sep_radius**2):
+                    pux, puy, pdd = norm(pdx, pdy)
+                    pf = (player_sep_radius - pdd) * 3.5
+                    pushx += pux * pf
+                    pushy += puy * pf
+
             e.try_move(arena, pushx*dt, pushy*dt)
 
             # melee contact damage with shield system, bounce-back, and auto-damage
@@ -945,11 +1011,48 @@ def main():
                     camera.add_shake(0.8, 6)
 
             if e.hp <= 0:
+                # Award points based on enemy type with combo multiplier
+                base_points = {"grunt": POINTS_GRUNT, "runner": POINTS_RUNNER,
+                               "shooter": POINTS_SHOOTER, "brute": POINTS_BRUTE}.get(e.kind, 10)
+                combo_mult = 1.0 + player.combo * COMBO_MULTIPLIER
+                player.points += int(base_points * combo_mult)
+                player.combo += 1
+                player.combo_timer = COMBO_WINDOW
+
+                # Chance to spawn pickup
+                if random.random() < PICKUP_SPAWN_CHANCE:
+                    pickup_kind = "health" if random.random() < 0.5 else "shield"
+                    pickups.append(Pickup(e.x, e.y, pickup_kind))
+
                 enemies.remove(e)
 
-        if player.hp <= 0:
-            # keep director running but player "dead"
-            pass
+        # Update combo timer
+        if player.combo_timer > 0:
+            player.combo_timer -= dt
+            if player.combo_timer <= 0:
+                player.combo = 0
+
+        # Update and collect pickups
+        for p in pickups[:]:
+            p.life -= dt
+            if p.life <= 0:
+                pickups.remove(p)
+                continue
+            # Check player collision
+            if dist2(p.x, p.y, player.x, player.y) < PICKUP_RADIUS**2:
+                if p.kind == "health":
+                    player.hp = min(player.maxhp, player.hp + HEALTH_PICKUP_AMOUNT)
+                elif p.kind == "shield":
+                    player.shield = min(player.max_shield, player.shield + SHIELD_PICKUP_AMOUNT)
+                pickups.remove(p)
+
+        # Stim pack auto-revive system
+        if player.hp <= 0 and player.stims_used < MAX_STIMS:
+            player.stims_used += 1
+            player.hp = player.maxhp
+            player.shield = player.max_shield
+            player.ifr = 60  # brief invincibility after revive
+            camera.add_shake(8.0, 20)  # big shake on revive
 
         # camera follow
         camera.update(player.x - W/2, player.y - H/2)
@@ -1068,6 +1171,24 @@ def main():
                 color = (255,210,80) if b.owner=="player" else (255,80,110)
                 pg.draw.circle(screen, color, (int(sx), int(sy)), 4)
 
+        # pickups
+        for p in pickups:
+            sx, sy = camera.apply_xy(p.x, p.y)
+            # Pulsing effect based on life remaining
+            pulse = 1.0 + 0.2 * math.sin(p.life * 8)
+            size = int(12 * pulse)
+            if p.kind == "health":
+                color = (255, 80, 80)  # red for health
+                pg.draw.circle(screen, color, (int(sx), int(sy)), size)
+                pg.draw.circle(screen, (255, 200, 200), (int(sx), int(sy)), size - 3)
+                # Cross symbol
+                pg.draw.rect(screen, color, (int(sx) - 4, int(sy) - 1, 8, 2))
+                pg.draw.rect(screen, color, (int(sx) - 1, int(sy) - 4, 2, 8))
+            else:  # shield
+                color = (80, 180, 255)  # blue for shield
+                pg.draw.circle(screen, color, (int(sx), int(sy)), size)
+                pg.draw.circle(screen, (200, 230, 255), (int(sx), int(sy)), size - 3)
+
         # enemies
         for e in enemies:
             sx, sy = camera.apply_xy(e.x, e.y)
@@ -1113,11 +1234,27 @@ def main():
         screen.blit(font.render("HP", True, (215, 185, 125)), (232, 10))
         screen.blit(font.render("SHIELD", True, (145, 175, 195)), (232, 28))
 
-        info = f"WAVE {director.wave}   E:{len(enemies)}   {director.state}   FPS:{int(fps)}"
+        # Points display (right side)
+        points_text = f"SCORE: {player.points}"
+        screen.blit(font.render(points_text, True, (255, 220, 100)), (W - 180, 10))
+
+        # Combo display (shows when active)
+        if player.combo > 0:
+            combo_color = (255, 180, 80) if player.combo < 5 else (255, 100, 100)
+            combo_text = f"x{player.combo + 1} COMBO!"
+            screen.blit(font.render(combo_text, True, combo_color), (W - 180, 30))
+
+        # Stim packs remaining (bottom right of UI)
+        stims_left = MAX_STIMS - player.stims_used
+        stim_text = f"STIMS: {stims_left}"
+        stim_color = (100, 255, 100) if stims_left > 1 else (255, 100, 100)
+        screen.blit(font.render(stim_text, True, stim_color), (W - 180, 50))
+
+        info = f"WAVE {director.wave}   E:{len(enemies)}   {director.state}"
         screen.blit(font.render(info, True, (195, 175, 145)), (330, 50))
 
         if player.hp <= 0:
-            msg = font.render("GAME OVER - press X to reroll arena", True, (255,220,220))
+            msg = font.render(f"GAME OVER - FINAL SCORE: {player.points} - press X to restart", True, (255,220,220))
             screen.blit(msg, (W//2 - msg.get_width()//2, 78))
 
         pg.display.flip()
