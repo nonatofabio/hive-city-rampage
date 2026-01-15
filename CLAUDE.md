@@ -22,14 +22,18 @@ This is a game development repository containing both PICO-8 and Pygame games. T
 
 ### Running Pygame Games
 ```bash
-# Activate virtual environment and run Pygame games
+# Run the main Pygame game
 cd src/pyg
 ../../.venv/bin/python hive_city_rampage.py
 
-# Generate terrain sprites
+# Generate sprites (run from assets directory)
 cd src/pyg/assets
 ../../../.venv/bin/python generate_terrain.py
 ../../../.venv/bin/python generate_advanced_terrain.py
+../../../.venv/bin/python generate_terrain_v2.py
+../../../.venv/bin/python generate_enemies.py
+../../../.venv/bin/python generate_props.py
+../../../.venv/bin/python convert_sprites.py
 ```
 
 ### Virtual Environment
@@ -61,9 +65,9 @@ games/
 - **Director system**: Wave-based enemy spawning with intensity scaling
 
 #### Sprite Management
-- **SpriteBank**: Centralized asset loading and animation creation
-- **Sprite sizing**: Configurable via `SPR` constant (48px for characters)
-- **Animation strips**: Horizontal sprite sheets sliced into frames
+- **SpriteBank**: Centralized asset loading with `load_anim(key, filename, frames=N, fps=N)`
+- **Animation strips**: Horizontal sprite sheets, frame width auto-calculated from image width / frame count
+- **Variable frame sizes**: Different sprites can have different frame dimensions (e.g., marine_walk 44x48, marine_shoot 49x48)
 - **Fallback rendering**: Colored placeholders when sprites are missing
 
 #### Terrain System
@@ -95,19 +99,27 @@ games/
 
 ## Asset Generation
 
-### Terrain Generation Scripts
-- `generate_terrain.py`: Creates basic wall/floor tiles with grim dark aesthetic
-- `generate_advanced_terrain.py`: Generates corner tiles, hazards, animations, decals
+### Asset Generation Scripts
+- `generate_terrain.py`: Basic wall/floor tiles with grim dark aesthetic
+- `generate_advanced_terrain.py`: Corner tiles, hazards, animations, decals
+- `generate_terrain_v2.py`: Autotiling system (16-state edge configurations)
+- `generate_enemies.py`: Genestealer-style enemy sprites
+- `generate_props.py`: Environmental objects (crates, barrels, computers, etc.)
+- `convert_sprites.py`: Convert single-frame sprites to animation strips
 
 ### Sprite Organization
 ```
 assets/
-├── marine_*.png          # Player animations (48x48 frames)
-├── *_idle.png            # Enemy animations
+├── marine_idle.png       # Player idle (1 frame)
+├── marine_walk.png       # Player walk (2 frames)
+├── marine_shoot.png      # Player shoot (4 frames)
+├── *_idle.png            # Enemy idle animations (4 frames)
+├── *_walk.png            # Enemy walk animations (3 frames)
 ├── terrain_*.png         # Static tile variants
-├── anim_*.png           # Animated tile sheets
-├── decal_*.png          # Overlay graphics
-├── hazard_*.png         # Special floor tiles
+├── anim_*.png            # Animated tile sheets
+├── decal_*.png           # Overlay graphics
+├── hazard_*.png          # Special floor tiles
+├── prop_*.png            # Environmental props
 └── terrain_metadata.json # Tile configuration
 ```
 
