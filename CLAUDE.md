@@ -55,7 +55,18 @@ games/
 └── .venv/            # Python virtual environment
 ```
 
-### Pygame Game Architecture (hive_city_rampage.py)
+### Pygame Game Architecture (Hive City Rampage)
+
+#### Module Structure
+The game is organized into modular components:
+- **hive_city_rampage.py**: Main game loop, rendering, and input handling (~800 lines)
+- **constants.py**: All gameplay constants and configuration values
+- **utils.py**: Math utilities (clamp, dist2, norm, lerp)
+- **assets.py**: Sprite loading system with `SpriteBank` and `Anim` classes
+- **world.py**: `Camera` (with shake) and `Arena` (procedural generation) classes
+- **entities.py**: `Entity` base class, `Player`, `Enemy`, `Bullet`, `Pickup`, `Explosion`, `VFX`
+- **director.py**: Wave-based enemy spawning with state machine
+- **ai.py**: Target prioritization and aim assist
 
 #### Core Systems
 - **Tile-based world**: 32x32 pixel tiles, procedural arena generation
@@ -80,8 +91,8 @@ games/
 #### Game Constants
 - Display: 960x540 window, 60 FPS
 - World: 120x90 tiles (3840x2880 pixels)
-- Movement: Acceleration-based with friction and turn drag
-- Combat: Aim assist with target prioritization
+- Movement: WASD with acceleration-based physics
+- Combat: Mouse aiming, left-click shooting, space for grenades
 
 ### PICO-8 Game Architecture
 
@@ -105,6 +116,7 @@ games/
 - `generate_terrain_v2.py`: Autotiling system (16-state edge configurations)
 - `generate_enemies.py`: Genestealer-style enemy sprites
 - `generate_props.py`: Environmental objects (crates, barrels, computers, etc.)
+- `generate_effects.py`: Explosion, smoke, shockwave animations and grenade pickup
 - `convert_sprites.py`: Convert single-frame sprites to animation strips
 
 ### Sprite Organization
@@ -115,6 +127,10 @@ assets/
 ├── marine_shoot.png      # Player shoot (4 frames)
 ├── *_idle.png            # Enemy idle animations (4 frames)
 ├── *_walk.png            # Enemy walk animations (3 frames)
+├── explosion.png         # Explosion animation (8 frames)
+├── smoke.png             # Smoke effect (6 frames)
+├── shockwave.png         # Shockwave effect (6 frames)
+├── grenade_pickup.png    # Grenade pickup item
 ├── terrain_*.png         # Static tile variants
 ├── anim_*.png            # Animated tile sheets
 ├── decal_*.png           # Overlay graphics
@@ -132,12 +148,21 @@ assets/
 
 ### Enemy AI
 - Direct pursuit with speed variations by type
-- Separation forces to prevent clustering
+- Separation forces to prevent clustering (32px for runners, 56px for others)
 - Shooter enemies retreat at close range
 - Contact damage with cooldowns and invincibility frames
+- Sprite mirroring based on player position
 
 ### Wave System (Director)
 - States: build → push → breather → spike
 - Intensity scaling over time
 - Budget-based spawning with pressure limits
 - Safe spawn distance enforcement
+
+### Player Controls
+- **Movement**: WASD keys with acceleration-based physics
+- **Aiming**: Mouse cursor for precise targeting
+- **Shooting**: Left-click for primary weapon
+- **Grenades**: Space bar for area-of-effect explosions (240px radius)
+- **Shield**: Regenerates at 2/sec, pickups provide instant boost
+- **Stim Packs**: Auto-revive on death (3 uses total)
