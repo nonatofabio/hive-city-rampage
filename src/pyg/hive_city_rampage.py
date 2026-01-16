@@ -35,15 +35,23 @@ ENEMY_BULLET_SPEED = 250.0
 ENEMY_BULLET_LIFE = 1.2
 ENEMY_SHOOT_RANGE = 9 * TILE
 
-# shield regen
-SHIELD_REGEN_DELAY = 0.4  # seconds after shooting before regen starts
-SHIELD_REGEN_RATE = 5.0   # shield points per second
+# shield regen (reduced to favor pickups)
+SHIELD_REGEN_DELAY = 1.2  # seconds after shooting before regen starts
+SHIELD_REGEN_RATE = 2.0   # shield points per second (was 5)
 
-# pickups
+# pickups (increased drop rate)
 PICKUP_RADIUS = 24
-PICKUP_SPAWN_CHANCE = 0.15  # chance per enemy kill
+PICKUP_SPAWN_CHANCE = 0.25  # chance per enemy kill (was 0.15)
 HEALTH_PICKUP_AMOUNT = 3
 SHIELD_PICKUP_AMOUNT = 5
+
+# grenades
+GRENADE_COOLDOWN = 3.0  # seconds between grenades
+GRENADE_RADIUS = 240  # explosion radius (doubled for massive blast)
+GRENADE_DAMAGE = 4  # damage to enemies
+GRENADE_KNOCKBACK = 800  # knockback force
+MAX_GRENADES = 5  # starting grenades
+GRENADE_PICKUP_CHANCE = 0.08  # chance to drop grenade pickup
 
 # points
 POINTS_GRUNT = 10
@@ -490,6 +498,9 @@ class Player(Entity):
         self.combo_timer = 0.0
         # Stim packs (auto-revive)
         self.stims_used = 0
+        # Grenades
+        self.grenades = MAX_GRENADES
+        self.grenade_cd = 0.0
 
 class Enemy(Entity):
     def __init__(self, x, y, kind="grunt", wave=1):
@@ -525,8 +536,23 @@ class Pickup:
     def __init__(self, x, y, kind="health"):
         self.x = x
         self.y = y
-        self.kind = kind  # "health" or "shield"
+        self.kind = kind  # "health", "shield", or "grenade"
         self.life = 15.0  # despawn after 15 seconds
+
+class Explosion:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.frame = 0
+        self.life = 0.5  # seconds for full animation
+
+class VFX:
+    def __init__(self, x, y, kind="smoke"):
+        self.x = x
+        self.y = y
+        self.kind = kind  # "smoke" or "shockwave"
+        self.frame = 0
+        self.life = 0.4 if kind == "smoke" else 0.3
 
 # -------------------- DIRECTOR --------------------
 class Director:
@@ -654,6 +680,30 @@ def main():
     player_bullet = load_image(os.path.join(assets.dir, "bullet_player.png"))
     enemy_bullet = load_image(os.path.join(assets.dir, "bullet_enemy.png"))
 
+    # Load effect animations
+    explosion_sheet = load_image(os.path.join(assets.dir, "explosion.png"))
+    explosion_frames = []
+    if explosion_sheet:
+        for i in range(8):
+            rect = pg.Rect(i * 64, 0, 64, 64)
+            explosion_frames.append(explosion_sheet.subsurface(rect).copy())
+
+    smoke_sheet = load_image(os.path.join(assets.dir, "smoke.png"))
+    smoke_frames = []
+    if smoke_sheet:
+        for i in range(6):
+            rect = pg.Rect(i * 32, 0, 32, 32)
+            smoke_frames.append(smoke_sheet.subsurface(rect).copy())
+
+    shockwave_sheet = load_image(os.path.join(assets.dir, "shockwave.png"))
+    shockwave_frames = []
+    if shockwave_sheet:
+        for i in range(6):
+            rect = pg.Rect(i * 96, 0, 96, 96)
+            shockwave_frames.append(shockwave_sheet.subsurface(rect).copy())
+
+    grenade_pickup_img = load_image(os.path.join(assets.dir, "pickup_grenade.png"))
+
     # Load terrain sprites v2 (edge-aware autotiling)
     terrain_interior = load_image(os.path.join(assets.dir, "terrain_interior.png"))
     terrain_autotile = load_image(os.path.join(assets.dir, "terrain_autotile.png"))
@@ -748,6 +798,8 @@ def main():
     enemies=[]
     bullets=[]
     pickups=[]
+    explosions=[]
+    vfx=[]
 
     # Create AnimatedTile instances for the arena
     animated_tile_instances = {}
@@ -784,6 +836,7 @@ def main():
                 arena = Arena()
                 player = Player(arena.w*TILE/2, arena.h*TILE/2)
                 enemies.clear(); bullets.clear(); pickups.clear()
+                explosions.clear(); vfx.clear()
                 director = Director()
                 camera.shake_t = 0; camera.shake_pow = 0; camera.shake_seed = 0
 
@@ -807,19 +860,28 @@ def main():
                 if sx or sy:
                     player.face = (sx, sy)
 
-            player.vx += ax * PLAYER_ACC
-            player.vy += ay * PLAYER_ACC
+            # Apply acceleration with diagonal compensation
+            if ax and ay:
+                # For diagonal movement, normalize the input to maintain consistent speed
+                # sqrt(2) normalization prevents slowdown on diagonals
+                diag_factor = 0.7071  # 1/sqrt(2)
+                player.vx += ax * PLAYER_ACC * diag_factor * 1.4  # Extra boost for diagonals
+                player.vy += ay * PLAYER_ACC * diag_factor * 1.4
+            else:
+                player.vx += ax * PLAYER_ACC
+                player.vy += ay * PLAYER_ACC
 
-            # Diagonal movement gets ~55% speed boost for smooth radial feel
-            max_sp = PLAYER_MAX * 1.55 if (ax and ay) else PLAYER_MAX
+            # Speed clamping
             sp = math.hypot(player.vx, player.vy)
-            if sp > max_sp:
-                s = max_sp / sp
-                player.vx *= s; player.vy *= s
+            if sp > PLAYER_MAX:
+                s = PLAYER_MAX / sp
+                player.vx *= s
+                player.vy *= s
 
+            # Reduced turn drag for snappier controls
             if (ax and abs(player.vy) > 80) or (ay and abs(player.vx) > 80):
-                player.vx *= 0.88  # softer turn drag for smoother radial movement
-                player.vy *= 0.88
+                player.vx *= 0.92  # less drag for quicker direction changes
+                player.vy *= 0.92
 
             player.vx *= PLAYER_FRIC
             player.vy *= PLAYER_FRIC
@@ -860,6 +922,34 @@ def main():
                 bvy = player.aim[1] * 520
                 bullets.append(Bullet(player.x, player.y, bvx, bvy, life=0.75, owner="player"))
                 camera.add_shake(1.1, 8)  # halved for better feel
+
+            # Grenade throwing (space key)
+            if player.grenade_cd > 0:
+                player.grenade_cd -= dt
+            if keys[pg.K_SPACE] and player.grenade_cd <= 0 and player.grenades > 0:
+                player.grenades -= 1
+                player.grenade_cd = GRENADE_COOLDOWN
+
+                # Create explosion at player position
+                explosions.append(Explosion(player.x, player.y))
+                vfx.append(VFX(player.x, player.y, "shockwave"))
+
+                # Damage and knockback all enemies in radius
+                for e in enemies[:]:
+                    dx, dy = e.x - player.x, e.y - player.y
+                    d2 = dx*dx + dy*dy
+                    if d2 < GRENADE_RADIUS**2:
+                        e.hp -= GRENADE_DAMAGE
+                        # Knockback away from explosion
+                        kx, ky, d = norm(dx, dy)
+                        force = GRENADE_KNOCKBACK * (1 - d/GRENADE_RADIUS)
+                        e.knock_vx += kx * force
+                        e.knock_vy += ky * force
+                        # Add smoke effect on hit enemies
+                        vfx.append(VFX(e.x, e.y, "smoke"))
+
+                # Big screen shake
+                camera.add_shake(12.0, 15)
 
             # Shield regeneration (continuous after delay when not shooting)
             if not player.is_shooting and player.shield < player.max_shield:
@@ -1023,6 +1113,8 @@ def main():
                 if random.random() < PICKUP_SPAWN_CHANCE:
                     pickup_kind = "health" if random.random() < 0.5 else "shield"
                     pickups.append(Pickup(e.x, e.y, pickup_kind))
+                elif random.random() < GRENADE_PICKUP_CHANCE:
+                    pickups.append(Pickup(e.x, e.y, "grenade"))
 
                 enemies.remove(e)
 
@@ -1044,7 +1136,26 @@ def main():
                     player.hp = min(player.maxhp, player.hp + HEALTH_PICKUP_AMOUNT)
                 elif p.kind == "shield":
                     player.shield = min(player.max_shield, player.shield + SHIELD_PICKUP_AMOUNT)
+                elif p.kind == "grenade":
+                    player.grenades += 1  # No max limit, let player stock up
                 pickups.remove(p)
+
+        # Update explosions
+        for exp in explosions[:]:
+            exp.life -= dt
+            exp.frame = int((0.5 - exp.life) * 16)  # 8 frames over 0.5 seconds
+            if exp.life <= 0:
+                explosions.remove(exp)
+
+        # Update VFX
+        for v in vfx[:]:
+            v.life -= dt
+            if v.kind == "smoke":
+                v.frame = int((0.4 - v.life) * 15)  # 6 frames over 0.4 seconds
+            else:  # shockwave
+                v.frame = int((0.3 - v.life) * 20)  # 6 frames over 0.3 seconds
+            if v.life <= 0:
+                vfx.remove(v)
 
         # Stim pack auto-revive system
         if player.hp <= 0 and player.stims_used < MAX_STIMS:
@@ -1184,16 +1295,26 @@ def main():
                 # Cross symbol
                 pg.draw.rect(screen, color, (int(sx) - 4, int(sy) - 1, 8, 2))
                 pg.draw.rect(screen, color, (int(sx) - 1, int(sy) - 4, 2, 8))
-            else:  # shield
+            elif p.kind == "shield":
                 color = (80, 180, 255)  # blue for shield
                 pg.draw.circle(screen, color, (int(sx), int(sy)), size)
                 pg.draw.circle(screen, (200, 230, 255), (int(sx), int(sy)), size - 3)
+            else:  # grenade
+                if grenade_pickup_img:
+                    blit_center(screen, grenade_pickup_img, sx, sy)
+                else:
+                    color = (100, 140, 100)  # green for grenade
+                    pg.draw.circle(screen, color, (int(sx), int(sy)), size)
+                    pg.draw.circle(screen, (150, 200, 150), (int(sx), int(sy)), size - 3)
 
         # enemies
         for e in enemies:
             sx, sy = camera.apply_xy(e.x, e.y)
             img = enemy_walk_anims[e.kind].frame()
             if img:
+                # Flip sprite if moving left (toward player)
+                if player.x < e.x:
+                    img = pg.transform.flip(img, True, False)
                 blit_center(screen, img, sx, sy)
             else:
                 color = (170,90,90)
@@ -1210,9 +1331,32 @@ def main():
         else:
             pimg = marine_walk.frame() if moving else marine_idle.frame()
         if pimg:
+            # Flip sprite if aiming left
+            if player.aim[0] < 0:
+                pimg = pg.transform.flip(pimg, True, False)
             blit_center(screen, pimg, psx, psy)
         else:
             draw_placeholder(screen, psx, psy, (90,180,255), size=50)
+
+        # Render VFX (shockwaves first, under explosions)
+        for v in vfx:
+            sx, sy = camera.apply_xy(v.x, v.y)
+            if v.kind == "shockwave":
+                if shockwave_frames and 0 <= v.frame < len(shockwave_frames):
+                    blit_center(screen, shockwave_frames[v.frame], sx, sy)
+
+        # Render explosions
+        for exp in explosions:
+            sx, sy = camera.apply_xy(exp.x, exp.y)
+            if explosion_frames and 0 <= exp.frame < len(explosion_frames):
+                blit_center(screen, explosion_frames[exp.frame], sx, sy)
+
+        # Render smoke VFX (on top)
+        for v in vfx:
+            sx, sy = camera.apply_xy(v.x, v.y)
+            if v.kind == "smoke":
+                if smoke_frames and 0 <= v.frame < len(smoke_frames):
+                    blit_center(screen, smoke_frames[v.frame], sx, sy)
 
         # UI - warm dark panel
         ui = pg.Rect(0,0,W,74)
@@ -1244,11 +1388,16 @@ def main():
             combo_text = f"x{player.combo + 1} COMBO!"
             screen.blit(font.render(combo_text, True, combo_color), (W - 180, 30))
 
+        # Grenades remaining (below combo)
+        grenade_text = f"GRENADES: {player.grenades}"
+        grenade_color = (150, 200, 150) if player.grenades > 0 else (100, 100, 100)
+        screen.blit(font.render(grenade_text, True, grenade_color), (W - 200, 48))
+
         # Stim packs remaining (bottom right of UI)
         stims_left = MAX_STIMS - player.stims_used
         stim_text = f"STIMS: {stims_left}"
         stim_color = (100, 255, 100) if stims_left > 1 else (255, 100, 100)
-        screen.blit(font.render(stim_text, True, stim_color), (W - 180, 50))
+        screen.blit(font.render(stim_text, True, stim_color), (W - 90, 48))
 
         info = f"WAVE {director.wave}   E:{len(enemies)}   {director.state}"
         screen.blit(font.render(info, True, (195, 175, 145)), (330, 50))
