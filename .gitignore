@@ -3,3 +3,6 @@ __pycache__/
 .venv
 .claude
 pico-8
+
+uv.*
+*.log

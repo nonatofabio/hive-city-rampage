@@ -1,0 +1,7 @@
+[project]
+name = "hive-city-rampage"
+version = "0.1.0"
+description = "A grim dark top-down shooter where you're humanity's last line of defense against endless xeno horrors"
+readme = "README.md"
+requires-python = ">=3.13.1"
+dependencies = []
