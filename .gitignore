@@ -6,3 +6,10 @@ pico-8
 
 uv.*
 *.log
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+*.pyc
+*.pyo
