@@ -7,6 +7,11 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)]()
 
+<p align="center">
+  <img src="static/inGame_01.png" width="48%" alt="Gameplay Screenshot 1">
+  <img src="static/inGame_02.png" width="48%" alt="Gameplay Screenshot 2">
+</p>
+
 ---
 
 ## 🎮 SURVIVE. ADAPT. RAMPAGE.
